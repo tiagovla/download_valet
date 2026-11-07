@@ -76,11 +76,21 @@ function isOtherExtension(item) {
   return !!item.byExtensionId && item.byExtensionId !== api.runtime.id;
 }
 
+function normalizePath(p) {
+  return String(p || '').replace(/\\/g, '/');
+}
+
+function isInDownloadsRoot(path) {
+  const parts = normalizePath(path).split('/').filter(Boolean);
+  return parts.length >= 2 && parts[parts.length - 2].toLowerCase() === 'downloads';
+}
+
 // ---------------------------------------------------------------------------
 // Chrome, Edge, Brave, Opera: choose the path before the file is written
 // ---------------------------------------------------------------------------
 
 async function decideForChrome(item) {
+  if (!isInDownloadsRoot(item.filename)) return null;
   const settings = await loadSettings();
   if (!settings.enabled) return null;
   if (isOtherExtension(item) && !settings.includeExtensionDownloads) return null;
@@ -177,10 +187,6 @@ function looksLikeSameFile(original, copy) {
   return true;
 }
 
-function normalizePath(p) {
-  return String(p || '').replace(/\\/g, '/');
-}
-
 async function startCopy(original, path, settings) {
   const base = {
     url: original.url,
@@ -241,6 +247,7 @@ const KEPT_NOTES = {
 
 async function routeInFirefox(item) {
   if (item.byExtensionId === api.runtime.id) return; // our own copy
+  if (!isInDownloadsRoot(item.filename)) return;
   // Keep private filenames out of local history and never replay a container in the default cookie context.
   if (item.incognito || (item.cookieStoreId && item.cookieStoreId !== 'firefox-default')) return;
   const settings = await loadSettings();
