@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Download Valet settings</title>
+  <link rel="stylesheet" href="../shared/theme.css">
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to settings</a>
+  <aside class="sidebar" aria-label="Settings navigation">
+    <a class="brand" href="#overview"><img src="../icons/sorter.svg" width="40" height="40" alt=""><span>Download Valet<small>BROWSER EXTENSION</small></span></a>
+    <p class="nav-label">WORKSPACE</p>
+    <nav>
+      <a href="#overview"><span aria-hidden="true">01</span> Overview</a>
+      <a href="#routing"><span aria-hidden="true">02</span> Routing rules</a>
+      <a href="#behavior"><span aria-hidden="true">03</span> Preferences</a>
+    </nav>
+    <div class="sidebar-note"><span class="privacy-dot" aria-hidden="true"></span><strong>Yours, locally.</strong><p>Rules stay in this browser.<br>No account. No tracking.</p></div>
+  </aside>
+
+  <main class="page" id="main">
+    <header class="masthead" id="overview">
+      <div><p class="eyebrow">A LITTLE LESS CLUTTER</p><h1>Download settings<span>.</span></h1><p class="subtitle">Give every file a place to land.</p></div>
+      <label class="switch global-switch" title="Turn sorting on or off">
+        <input type="checkbox" id="enabled">
+        <span class="switch-track" aria-hidden="true"></span>
+        <span class="switch-label" id="enabled-label">Sorting is on</span>
+      </label>
+    </header>
+
+    <div class="overview-grid">
+      <section class="preview-card" aria-labelledby="try-heading">
+        <div class="card-kicker"><span class="preview-dot" aria-hidden="true"></span> BEFORE YOU DOWNLOAD</div>
+        <h2 id="try-heading">Where will this file go?</h2>
+        <div class="tester">
+          <label for="try-name">File name</label>
+          <input type="text" id="try-name" placeholder="holiday-photo.JPG" spellcheck="false" autocomplete="off">
+          <output id="try-result" for="try-name" class="route-line" aria-live="polite"></output>
+        </div>
+      </section>
+      <section class="folder-guide" aria-labelledby="base-heading">
+        <div class="folder-illustration" aria-hidden="true"><span></span></div>
+        <p class="eyebrow">YOUR STARTING POINT</p>
+        <h2 id="base-heading">One home for your files.</h2>
+        <p>Every destination starts inside your Downloads folder. Change your browser’s download location to use another drive.</p>
+        <div class="date-tip"><strong>Make room for dates</strong><p>Try <code>Images/{YYYY}-{MM}</code>. Use <code>{DD}</code> to add the day.</p></div>
+      </section>
+    </div>
+
+    <details class="browser-note" id="firefox-note" hidden>
+      <summary>A note about Firefox downloads</summary>
+      <p>Sorting requests the file a second time. Your original stays until the sorted copy finishes and passes file checks. If a site refuses the second request, the original stays in Downloads. Private and container downloads keep their original location.</p>
+    </details>
+
+    <section class="rules-section" id="routing" aria-labelledby="rules-heading">
+      <div class="section-head"><div><p class="eyebrow">CHOOSE THE DESTINATION</p><h2 id="rules-heading">Routing rules</h2></div><div class="head-actions"><button type="button" class="quiet" id="restore-defaults">Reset rules</button><button type="button" class="primary" id="add-rule">+ New rule</button></div></div>
+      <p class="help">Group file types in a rule. Specific extensions win, such as <code>tar.gz</code> before <code>gz</code>; the first rule wins ties.</p>
+      <ol class="rules" id="rule-list" aria-label="Routing rules in priority order"></ol>
+    </section>
+
+    <section class="preferences" id="behavior" aria-labelledby="preferences-heading">
+      <div class="section-head"><div><p class="eyebrow">THE SMALL DETAILS</p><h2 id="preferences-heading">Your preferences</h2></div><span class="autosave-note">Changes save automatically</span></div>
+      <div class="preferences-grid">
+        <section class="preference-card" aria-labelledby="other-heading">
+          <h3 id="other-heading">Everything else</h3><p class="help">Choose a home for files that don’t match a rule.</p>
+          <label class="check"><input type="checkbox" id="fallback-enabled"><span>Use a fallback folder</span></label>
+          <div class="folder-field" id="fallback-field"><span class="folder-prefix">Downloads/</span><input type="text" id="fallback-folder" spellcheck="false" aria-label="Folder for unmatched files"></div>
+          <p class="field-message" id="fallback-message" hidden></p>
+        </section>
+        <section class="preference-card" aria-labelledby="conflict-heading">
+          <h3 id="conflict-heading">Same name, new file</h3><p class="help">When a destination already contains this name:</p>
+          <div class="radios" role="radiogroup" aria-labelledby="conflict-heading">
+            <label class="check"><input type="radio" name="conflict" value="uniquify"><span>Keep both <small>Add a number to the new file.</small></span></label>
+            <label class="check"><input type="radio" name="conflict" value="overwrite"><span>Replace the existing file</span></label>
+            <label class="check"><input type="radio" name="conflict" value="prompt"><span>Ask each time</span></label>
+          </div>
+        </section>
+        <section class="preference-card extension-preference" aria-labelledby="ext-heading">
+          <div><h3 id="ext-heading">Downloads from other extensions</h3><p class="help">Other extensions usually choose their own folders. Turn this on to include their downloads.</p></div>
+          <label class="check"><input type="checkbox" id="include-extension-downloads"><span>Sort these too</span></label>
+        </section>
+      </div>
+    </section>
+    <footer class="page-footer"><span>Download Valet</span><span>Less sorting. More finding.</span></footer>
+  </main>
+
+  <div class="status" id="status" role="status" aria-live="polite"><span id="status-text"></span><button type="button" class="quiet" id="status-action" hidden></button></div>
+
+  <template id="rule-template">
+    <li class="rule">
+      <div class="rule-top"><label class="mini-switch" title="Use this rule"><input type="checkbox" class="rule-enabled"><span class="switch-track" aria-hidden="true"></span></label><input type="text" class="rule-name" placeholder="Rule name" aria-label="Rule name" maxlength="60"></div>
+      <label class="field"><span class="field-label">File types</span><textarea class="rule-extensions" rows="2" spellcheck="false" autocomplete="off" placeholder="pdf, docx, txt"></textarea></label>
+      <div class="field"><span class="field-label">Destination folder</span><div class="folder-field"><span class="folder-prefix">Downloads/</span><input type="text" class="rule-folder" spellcheck="false" autocomplete="off" placeholder="Documents" aria-label="Destination folder"></div></div>
+      <ul class="rule-messages"></ul>
+      <div class="rule-footer"><span>Rule priority</span><div class="rule-tools"><button type="button" class="icon-btn move-up" aria-label="Move rule up" title="Move up">↑</button><button type="button" class="icon-btn move-down" aria-label="Move rule down" title="Move down">↓</button><button type="button" class="icon-btn delete" aria-label="Delete rule" title="Delete rule">Delete</button></div></div>
+    </li>
+  </template>
+  <script src="../shared/rules.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Download Valet</title>
+  <link rel="stylesheet" href="../shared/theme.css">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="bar">
+    <img src="../icons/sorter.svg" width="24" height="24" alt="">
+    <h1>Download Valet</h1>
+    <label class="switch" title="Turn sorting on or off">
+      <input type="checkbox" id="enabled" aria-label="Sort downloads">
+      <span class="switch-track" aria-hidden="true"></span>
+    </label>
+  </header>
+
+  <p class="summary" id="summary"></p>
+
+  <ul class="recent" id="recent"></ul>
+  <p class="empty" id="empty" hidden>Nothing sorted yet. Download a file and it shows up here.</p>
+
+  <footer class="actions">
+    <button type="button" class="primary" id="open-settings">Edit rules</button>
+    <button type="button" class="quiet" id="open-folder">Open Downloads folder</button>
+  </footer>
+
+  <script src="../shared/rules.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
