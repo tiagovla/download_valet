@@ -1,0 +1,131 @@
+name: Publish releases
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-releases
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check release version
+        id: version
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          version = json.loads(Path("manifest.json").read_text())["version"]
+          package_version = json.loads(Path("package.json").read_text())["version"]
+          if version != package_version or not re.fullmatch(r"\d+\.\d+\.\d+", version):
+              raise SystemExit("manifest.json and package.json must have the same numeric release version")
+          if os.environ["GITHUB_REF_TYPE"] == "tag" and os.environ["GITHUB_REF_NAME"] != f"v{version}":
+              raise SystemExit("Release tag must match the manifest version")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"version={version}\n")
+          PY
+      - name: Run tests
+        run: npm test
+      - name: Build both browsers
+        run: npm run package
+      - name: Extract and validate Firefox package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 -m zipfile -e "dist/download-valet-$VERSION.xpi" "$RUNNER_TEMP/firefox"
+          npx --yes web-ext@10.8.0 lint --source-dir "$RUNNER_TEMP/firefox" --warnings-as-errors --no-config-discovery
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browser-packages
+          path: |
+            dist/*.xpi
+            dist/*-chrome.zip
+          if-no-files-found: error
+
+  github-release:
+    name: Publish GitHub release assets
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: browser-packages
+          path: dist
+      - name: Create release and upload both packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          assets=("dist/download-valet-$VERSION.xpi" "dist/download-valet-$VERSION-chrome.zip")
+          for asset in "${assets[@]}"; do test -f "$asset"; done
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
+              --verify-tag \
+              --title "Download Valet $VERSION" \
+              --generate-notes \
+              --notes "The Firefox XPI is unsigned; permanent installation requires Mozilla signing. Extract the Chrome ZIP and load it from chrome://extensions using Developer mode."
+          fi
+
+  firefox:
+    name: Submit to Mozilla Add-ons
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/download-artifact@v4
+        with:
+          name: browser-packages
+          path: dist
+      - name: Submit Firefox extension for public listing
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          : "${WEB_EXT_API_KEY:?Set the AMO_JWT_ISSUER repository secret}"
+          : "${WEB_EXT_API_SECRET:?Set the AMO_JWT_SECRET repository secret}"
+          python3 -m zipfile -e "dist/download-valet-$VERSION.xpi" "$RUNNER_TEMP/firefox"
+          npx --yes web-ext@10.8.0 sign \
+            --source-dir "$RUNNER_TEMP/firefox" \
+            --artifacts-dir "$RUNNER_TEMP/signed" \
+            --channel listed \
+            --amo-metadata .github/amo-metadata.json \
+            --approval-timeout 0 \
+            --no-input \
+            --no-config-discovery

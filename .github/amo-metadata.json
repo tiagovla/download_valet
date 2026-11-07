@@ -1,0 +1,6 @@
+{
+  "name": { "en-US": "Download Valet" },
+  "summary": { "en-US": "Automatically sort downloads into folders by file type with custom, editable rules." },
+  "categories": ["download-management"],
+  "version": { "license": "MIT" }
+}
