@@ -1,0 +1,21 @@
+# Build artifacts
+dist/
+web-ext-artifacts/
+*.xpi
+*.crx
+
+# Dependencies and Python caches
+node_modules/
+__pycache__/
+*.py[cod]
+
+# Local environment and Chrome signing keys
+.env
+.env.*
+!.env.example
+*.pem
+
+# Logs and OS metadata
+*.log
+.DS_Store
+Thumbs.db
