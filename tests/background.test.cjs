@@ -6,7 +6,8 @@ const fs = require('node:fs');
 const DR = require('../shared/rules.js');
 
 function event() {
-  return { listeners: [], addListener(listener) { this.listeners.push(listener); } };
+  return { listeners: [], addListener(listener) { this.listeners.push(listener); },
+    removeListener(listener) { this.listeners = this.listeners.filter(item => item !== listener); } };
 }
 
 function harness(options = {}) {
@@ -19,6 +20,7 @@ function harness(options = {}) {
     ...options.original
   };
   const items = new Map([[1, original]]);
+  let nextId = 2;
   function storage(data) {
     return {
       async get(keys) {
@@ -33,14 +35,17 @@ function harness(options = {}) {
     runtime: { id: 'sorter@test', onInstalled: event(), onStartup: event(), async openOptionsPage() {} },
     action: { async setBadgeBackgroundColor() {}, async setBadgeText() {}, async setTitle() {} },
     storage: { local: storage(local), session: storage(session), onChanged: event() },
+    webRequest: { onBeforeRequest: event(), onHeadersReceived: event() },
     downloads: {
       onCreated: event(), onChanged: event(),
       async search({ id }) { return items.has(id) ? [{ ...items.get(id) }] : []; },
       async download(config) {
         calls.push(['download', config]);
         if (options.startError) throw new Error('Server refused copy');
-        items.set(2, { ...original, id: 2, state: 'in_progress', bytesReceived: 0, byExtensionId: api.runtime.id, ...options.copy });
-        return 2;
+        const id = nextId++;
+        items.set(id, { ...original, id, filename: config.filename ? '/Downloads/' + config.filename : original.filename,
+          state: 'in_progress', bytesReceived: 0, byExtensionId: api.runtime.id, ...options.copy });
+        return id;
       },
       async cancel(id) { calls.push(['cancel', id]); items.get(id).state = 'interrupted'; },
       async removeFile(id) {
@@ -57,7 +62,7 @@ function harness(options = {}) {
       calls.push(['importScripts', path]);
       vm.runInContext(fs.readFileSync(require.resolve('../' + path), 'utf8'), context);
     } } : { browser: api, DownloadSorter: DR }),
-    console: { warn() {}, error() {} }, setTimeout, clearTimeout
+    console: { warn() {}, error() {} }, setTimeout, clearTimeout, URL
   });
   vm.runInContext(fs.readFileSync(require.resolve('../background.js'), 'utf8'), context);
   return { api, context, local, session, calls, original, items,
@@ -189,6 +194,143 @@ test('Chrome service worker imports shared rules and registers only native routi
   assert.equal(h.api.downloads.onDeterminingFilename.listeners.length, 1);
   assert.equal(h.api.downloads.onCreated.listeners.length, 0);
   assert.equal(h.api.downloads.onChanged.listeners.length, 0);
+  assert.equal(h.api.webRequest.onBeforeRequest.listeners.length, 0);
+  assert.equal(h.api.webRequest.onHeadersReceived.listeners.length, 0);
+});
+
+test('Firefox PDF links become silent downloads and retain normal sorting checks', async () => {
+  const h = harness({ settings: { ...DR.defaultSettings(), conflictAction: 'overwrite' } });
+  const result = await h.api.webRequest.onBeforeRequest.listeners[0]({
+    url: 'https://example.test/report.PDF?token=abc', method: 'GET', cookieStoreId: 'firefox-default',
+    originUrl: 'https://example.test/account'
+  });
+  assert.equal(result.cancel, true);
+  const downloads = h.calls.filter(call => call[0] === 'download').map(call => call[1]);
+  assert.equal(downloads.length, 2);
+  assert.equal(downloads[0].saveAs, false);
+  assert.equal(downloads[0].conflictAction, 'uniquify');
+  assert.equal(downloads[0].headers[0].value, 'https://example.test/account');
+  assert.equal(downloads[1].filename, 'Documents/report.pdf');
+  assert.equal(downloads[1].saveAs, false);
+  assert.equal(downloads[1].conflictAction, 'overwrite');
+  assert.ok(h.items.has(2));
+  Object.assign(h.items.get(3), { state: 'complete', bytesReceived: 100 });
+  await h.context.scheduleSettle(3);
+  assert.equal(h.items.has(2), false);
+  assert.equal(h.local.log[0].downloadId, 3);
+});
+
+test('Firefox detects PDFs from response MIME when the URL has no extension', async () => {
+  const h = harness({ copy: { state: 'complete' } });
+  const result = await h.api.webRequest.onHeadersReceived.listeners[0]({
+    url: 'https://example.test/download?id=123', method: 'GET', statusCode: 200,
+    responseHeaders: [
+      { name: 'Content-Type', value: 'application/pdf; charset=binary' },
+      { name: 'Content-Disposition', value: 'attachment; filename="server report.pdf"' }
+    ]
+  });
+  assert.equal(result.cancel, true);
+  assert.equal(h.calls[0][1].saveAs, false);
+  assert.equal(h.calls[0][1].filename, 'server report.pdf');
+  assert.equal(h.calls[1][1].filename, 'Documents/server report.pdf');
+});
+
+test('PDF response filenames support UTF-8, quoted separators, and malformed encoding fallback', () => {
+  const h = harness();
+  for (const [value, expected] of [
+    ['attachment; filename="fallback.pdf"; filename*=UTF-8\'\'ara%C3%A7%C3%A3o.pdf', 'aração.pdf'],
+    ['attachment; filename="report; final.pdf"', 'report; final.pdf'],
+    ['attachment; filename="fallback.pdf"; filename*=UTF-8\'\'%ZZ.pdf', 'fallback.pdf'],
+    ['attachment; filename=report.pdf', 'report.pdf']
+  ]) {
+    assert.equal(h.context.responseFilename([{ name: 'Content-Disposition', value }]), expected);
+  }
+});
+
+test('Firefox also intercepts PDF attachments served with a generic MIME type', async () => {
+  const h = harness({ copy: { state: 'complete' } });
+  const result = await h.api.webRequest.onHeadersReceived.listeners[0]({
+    url: 'https://example.test/export', method: 'GET', statusCode: 200,
+    responseHeaders: [
+      { name: 'Content-Type', value: 'application/octet-stream' },
+      { name: 'Content-Disposition', value: 'attachment; filename="report.pdf"' }
+    ]
+  });
+  assert.equal(result.cancel, true);
+  assert.equal(h.calls[0][1].filename, 'report.pdf');
+  assert.equal(h.calls[0][1].saveAs, false);
+});
+
+test('Firefox silent downloads preserve normal behavior outside public GET PDF links', async () => {
+  for (const details of [
+    { incognito: true }, { cookieStoreId: 'firefox-container-1' }, { method: 'POST' }, { tabId: -1 },
+    { url: 'https://example.test/page?file=report.pdf' }
+  ]) {
+    const h = harness();
+    const result = await h.api.webRequest.onBeforeRequest.listeners[0]({
+      url: 'https://example.test/report.pdf', method: 'GET', ...details
+    });
+    assert.equal(result, undefined);
+    assert.equal(h.calls.length, 0);
+  }
+  const paused = harness({ settings: { ...DR.defaultSettings(), enabled: false } });
+  assert.equal(await paused.context.downloadPdfSilently({ url: 'https://example.test/report.pdf', method: 'GET' }), undefined);
+  assert.equal(paused.calls.length, 0);
+  const failed = harness({ startError: true });
+  assert.equal(await failed.context.downloadPdfSilently({ url: 'https://example.test/report.pdf', method: 'GET' }), undefined);
+});
+
+test('Firefox keeps the silent original if its sorted copy fails', async () => {
+  const h = harness();
+  await h.context.downloadPdfSilently({ url: 'https://example.test/report.pdf', method: 'GET' });
+  Object.assign(h.items.get(3), { state: 'interrupted', error: 'NETWORK_FAILED' });
+  await h.context.scheduleSettle(3);
+  assert.ok(h.items.has(2));
+  assert.equal(h.items.has(3), false);
+  assert.equal(h.local.log[0].downloadId, 2);
+  assert.equal(h.local.log[0].status, 'left');
+});
+
+test('Firefox only cancels an already-open PDF response after its silent original is verified', async () => {
+  const h = harness();
+  let settled = false;
+  const intercepted = h.api.webRequest.onHeadersReceived.listeners[0]({
+    url: 'https://example.test/export', method: 'GET', statusCode: 200,
+    responseHeaders: [{ name: 'Content-Type', value: 'application/pdf' }]
+  }).then(result => { settled = true; return result; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false);
+  assert.equal(h.calls.length, 1);
+  Object.assign(h.items.get(2), { state: 'complete' });
+  for (const listener of [...h.api.downloads.onChanged.listeners]) {
+    listener({ id: 2, state: { current: 'complete' } });
+  }
+  assert.equal((await intercepted).cancel, true);
+  assert.equal(h.api.downloads.onChanged.listeners.length, 1);
+});
+
+test('Firefox preserves the original response when a one-time link refuses the silent request', async () => {
+  for (const copy of [
+    { state: 'interrupted', error: 'SERVER_FORBIDDEN' },
+    { state: 'complete', mime: 'text/html' },
+    { state: 'complete', fileSize: 50 }
+  ]) {
+    const h = harness({ copy });
+    const result = await h.api.webRequest.onHeadersReceived.listeners[0]({
+      url: 'https://example.test/export', method: 'GET', statusCode: 200,
+      responseHeaders: [{ name: 'Content-Type', value: 'application/pdf' }, { name: 'Content-Length', value: '100' }]
+    });
+    assert.equal(result, undefined);
+    assert.equal(h.items.has(2), false);
+    assert.equal(h.api.downloads.onChanged.listeners.length, 1);
+  }
+  const unreadable = harness();
+  unreadable.api.downloads.search = async () => { throw new Error('Download unavailable'); };
+  assert.equal(await unreadable.api.webRequest.onHeadersReceived.listeners[0]({
+    url: 'https://example.test/export', method: 'GET', statusCode: 200,
+    responseHeaders: [{ name: 'Content-Type', value: 'application/pdf' }]
+  }), undefined);
+  assert.equal(unreadable.api.downloads.onChanged.listeners.length, 1);
 });
 
 test('Chrome suggests the destination without downloading a second copy', async () => {

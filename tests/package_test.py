@@ -26,7 +26,10 @@ class PackageTest(unittest.TestCase):
             self.assertEqual(ff, original)
             self.assertEqual(ch["background"], {"service_worker": "background.js"})
             self.assertNotIn("browser_specific_settings", ch)
-            self.assertEqual(ch["permissions"], ff["permissions"])
+            self.assertEqual(ch["permissions"], ["downloads", "storage"])
+            self.assertNotIn("host_permissions", ch)
+            self.assertIn("webRequestBlocking", ff["permissions"])
+            self.assertEqual(ff["host_permissions"], ["http://*/*", "https://*/*"])
             self.assertEqual(ch["options_ui"], ff["options_ui"])
             self.assertEqual(ch["manifest_version"], 3)
 

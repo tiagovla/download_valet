@@ -70,7 +70,8 @@ def main():
                 mime, data = "text/html", b"<html>Please sign in</html>"
             self.send_response(status)
             self.send_header("Content-Type", mime)
-            self.send_header("Content-Disposition", f'attachment; filename="{self.path[1:]}"')
+            filename = "server report.pdf" if self.path == "/export" else self.path[1:]
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             try:
@@ -176,9 +177,11 @@ def main():
                     else:
                         command("POST", prefix + "/url", {"url": url})
 
-                def download(name):
+                def download(name, download_attribute=False):
                     navigate(fixture_url)
-                    run(f"const a = document.createElement('a'); a.href = {json.dumps(fixture_url + '/' + name)}; document.body.append(a); a.click();")
+                    run(f"const a = document.createElement('a'); a.href = {json.dumps(fixture_url + '/' + name)}; "
+                        + ("a.download = ''; " if download_attribute else "")
+                        + "document.body.append(a); a.click();")
 
                 if firefox:
                     addon = command("POST", prefix + "/moz/addon/install", {"path": str(archive), "temporary": True})
@@ -207,6 +210,57 @@ def main():
                 download("sample.pdf")
                 wait_for(lambda: len(list((downloads / "Documents").glob("sample*.pdf"))) == 2 and not (downloads / "sample.pdf").exists())
                 print("PASS: real downloads route correctly; conflicts keep both files", flush=True)
+
+                if firefox:
+                    command("POST", prefix + "/moz/context", {"context": "chrome"})
+                    run("""
+                        Services.prefs.setBoolPref('browser.download.useDownloadDir', false);
+                        Services.prefs.setBoolPref('pdfjs.disabled', false);
+                        Services.prefs.setBoolPref('browser.download.open_pdf_attachments_inline', false);
+                        const info = Cc['@mozilla.org/mime;1'].getService(Ci.nsIMIMEService)
+                            .getFromTypeAndExtension('application/pdf', 'pdf');
+                        info.preferredAction = Ci.nsIHandlerInfo.handleInternally;
+                        info.alwaysAskBeforeHandling = false;
+                        Cc['@mozilla.org/uriloader/handler-service;1'].getService(Ci.nsIHandlerService).store(info);
+                    """)
+                    command("POST", prefix + "/moz/context", {"context": "content"})
+                    download("silent.pdf")
+                    wait_for(lambda: (downloads / "Documents/silent.pdf").exists() and not (downloads / "silent.pdf").exists())
+                    assert (downloads / "Documents/silent.pdf").read_bytes() == payload
+                    assert requests['/silent.pdf'] == 2
+                    download("silent-attribute.pdf", download_attribute=True)
+                    wait_for(lambda: (downloads / "Documents/silent-attribute.pdf").exists() and not (downloads / "silent-attribute.pdf").exists())
+                    assert (downloads / "Documents/silent-attribute.pdf").read_bytes() == payload
+                    command("POST", prefix + "/moz/context", {"context": "chrome"})
+                    tabs = run("return Array.from(gBrowser.tabs, tab => tab.linkedBrowser.currentURI.spec)")
+                    assert not any(url.startswith('file:') for url in tabs), tabs
+                    assert run("return gBrowser.selectedBrowser.currentURI.spec") == fixture_url + "/", tabs
+                    run("""
+                        const info = Cc['@mozilla.org/mime;1'].getService(Ci.nsIMIMEService)
+                            .getFromTypeAndExtension('application/pdf', 'pdf');
+                        info.alwaysAskBeforeHandling = true;
+                        Cc['@mozilla.org/uriloader/handler-service;1'].getService(Ci.nsIHandlerService).store(info);
+                    """)
+                    command("POST", prefix + "/moz/context", {"context": "content"})
+                    download("export")
+                    wait_for(lambda: (downloads / "Documents/server report.pdf").exists())
+                    assert (downloads / "Documents/server report.pdf").read_bytes() == payload
+                    assert not (downloads / "server report.pdf").exists()
+                    command("POST", prefix + "/moz/context", {"context": "chrome"})
+                    tabs = run("return Array.from(gBrowser.tabs, tab => tab.linkedBrowser.currentURI.spec)")
+                    assert not any(url.startswith('file:') for url in tabs), tabs
+                    assert run("return gBrowser.selectedBrowser.currentURI.spec") == fixture_url + "/", tabs
+                    run("""
+                        Services.prefs.setBoolPref('browser.download.useDownloadDir', true);
+                        Services.prefs.setBoolPref('pdfjs.disabled', true);
+                        const info = Cc['@mozilla.org/mime;1'].getService(Ci.nsIMIMEService)
+                            .getFromTypeAndExtension('application/pdf', 'pdf');
+                        info.preferredAction = Ci.nsIHandlerInfo.saveToDisk;
+                        info.alwaysAskBeforeHandling = false;
+                        Cc['@mozilla.org/uriloader/handler-service;1'].getService(Ci.nsIHandlerService).store(info);
+                    """)
+                    command("POST", prefix + "/moz/context", {"context": "content"})
+                    print("PASS: PDFs save silently with folder prompts and automatic PDF viewing enabled; server filenames survive", flush=True)
 
                 for name in ("failed.pdf", "different.pdf"):
                     download(name)

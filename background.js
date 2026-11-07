@@ -245,8 +245,8 @@ const KEPT_NOTES = {
   'copy-missing': 'Kept in Downloads'
 };
 
-async function routeInFirefox(item) {
-  if (item.byExtensionId === api.runtime.id) return; // our own copy
+async function routeInFirefox(item, silentOriginal = false) {
+  if (item.byExtensionId === api.runtime.id && !silentOriginal) return; // our own copy
   if (!isInDownloadsRoot(item.filename)) return;
   // Keep private filenames out of local history and never replay a container in the default cookie context.
   if (item.incognito || (item.cookieStoreId && item.cookieStoreId !== 'firefox-default')) return;
@@ -288,7 +288,92 @@ async function routeInFirefox(item) {
   await scheduleSettle(copyId);
 }
 
+/** Starts PDF downloads ourselves so Firefox cannot prompt for a folder or auto-open the original. */
+async function downloadPdfSilently(details, filename) {
+  if (details.method !== 'GET' || details.tabId === -1 || details.incognito ||
+      (details.cookieStoreId && details.cookieStoreId !== 'firefox-default')) return;
+  const settings = await loadSettings();
+  if (!settings.enabled) return;
+  const options = { url: details.url, saveAs: false, conflictAction: 'uniquify' };
+  if (filename) options.filename = DR.sanitizeFileName(DR.baseName(filename));
+  if (ROUTABLE_URL.test(details.originUrl || '')) {
+    options.headers = [{ name: 'Referer', value: details.originUrl }];
+  }
+  let id;
+  try {
+    id = await api.downloads.download(options);
+  } catch (err) {
+    console.warn('Download Valet: could not start silent PDF download', err);
+    return;
+  }
+  // These first downloads may be sorted; copies created by routing must still be ignored.
+  let cancelOriginal = !details.responseHeaders;
+  try {
+    const item = details.responseHeaders ? await finishedDownload(id) : await getDownload(id);
+    if (details.responseHeaders) {
+      const header = name => {
+        const found = details.responseHeaders.find(header => header.name.toLowerCase() === name);
+        return found && found.value;
+      };
+      const expected = { state: 'complete', mime: header('content-type'),
+        fileSize: header('content-encoding') ? -1 : Number(header('content-length') || -1) };
+      // The response is already open: keep it available if a single-use link refuses our request.
+      if (!item || item.state !== 'complete' || item.error || !looksLikeSameFile(expected, item)) {
+        await quietly(() => discardDownload(id));
+        return;
+      }
+      cancelOriginal = true;
+    }
+    if (item) await routeInFirefox(item, true);
+  } catch (err) {
+    console.error('Download Valet: silent PDF routing failed; original retained', err);
+  }
+  return cancelOriginal ? { cancel: true } : undefined;
+}
+
+async function finishedDownload(id) {
+  let onChanged;
+  const finished = new Promise(resolve => {
+    onChanged = delta => {
+      if (delta.id === id && delta.state && delta.state.current !== 'in_progress') resolve();
+    };
+  });
+  api.downloads.onChanged.addListener(onChanged);
+  try {
+    const item = await getDownload(id);
+    if (!item || item.state !== 'in_progress') return item;
+    await finished;
+    return getDownload(id);
+  } finally {
+    api.downloads.onChanged.removeListener(onChanged);
+  }
+}
+
+function responseFilename(headers) {
+  const header = headers.find(header => header.name.toLowerCase() === 'content-disposition');
+  const value = header && header.value || '';
+  const encoded = /(?:^|;)\s*filename\*\s*=\s*UTF-8'[^']*'([^;]*)/i.exec(value);
+  if (encoded) {
+    try { return decodeURIComponent(encoded[1].trim()); } catch (err) { /* Fall back to the plain filename. */ }
+  }
+  const plain = /(?:^|;)\s*filename\s*=\s*(?:"((?:\\.|[^"])*)"|([^;]*))/i.exec(value);
+  return plain ? (plain[1] === undefined ? plain[2].trim() : plain[1].replace(/\\(.)/g, '$1')) : '';
+}
+
 if (!CHROME_MODE) {
+  const pdfFilter = { urls: ['http://*/*', 'https://*/*'], types: ['main_frame', 'sub_frame', 'other'] };
+  api.webRequest.onBeforeRequest.addListener(details => {
+    if (/\.pdf$/i.test(new URL(details.url).pathname)) return downloadPdfSilently(details);
+  }, pdfFilter, ['blocking']);
+  api.webRequest.onHeadersReceived.addListener(details => {
+    const headers = details.responseHeaders || [];
+    const mime = headers.find(header => header.name.toLowerCase() === 'content-type');
+    const filename = responseFilename(headers);
+    if (details.statusCode >= 200 && details.statusCode < 300 &&
+        (baseMime(mime && mime.value) === 'application/pdf' || /\.pdf$/i.test(filename))) {
+      return downloadPdfSilently(details, filename || 'download.pdf');
+    }
+  }, pdfFilter, ['blocking', 'responseHeaders']);
   api.downloads.onCreated.addListener((item) => {
     routeInFirefox(item).catch((err) => console.error('Download Valet: routing failed', err));
   });

@@ -13,6 +13,9 @@ for browser in ("firefox", "chrome"):
     manifest = json.loads((root / "manifest.json").read_text())
     if browser == "chrome":
         manifest.pop("browser_specific_settings")
+        manifest.pop("host_permissions")
+        manifest["permissions"] = [permission for permission in manifest["permissions"]
+                                   if permission not in ("webRequest", "webRequestBlocking")]
         manifest["background"] = {"service_worker": "background.js"}
         manifest["minimum_chrome_version"] = "102"
         for icons in (manifest["icons"], manifest["action"]["default_icon"]):

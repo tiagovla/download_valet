@@ -5,7 +5,13 @@
   "description": "Sorts downloads into folders by file type: images, documents, videos, archives and more. Every rule is editable.",
   "permissions": [
     "downloads",
-    "storage"
+    "storage",
+    "webRequest",
+    "webRequestBlocking"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
   ],
   "icons": {
     "16": "icons/sorter.svg",
